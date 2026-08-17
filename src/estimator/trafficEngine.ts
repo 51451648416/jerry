@@ -10,6 +10,7 @@ import {
   ApiLatencyMetrics,
   NonlinearTrafficState,
   DelayAwareSegmentResult,
+  DoubleVerificationState,
 } from "../types";
 import { parseRawTdxVdPayload } from "./apiParser";
 import { validateDetectorData } from "./dataValidation";
@@ -23,6 +24,10 @@ import {
   computeDepartureRecommendations,
 } from "./corridorEngine";
 import { getLearnedParameters } from "./modelTrainingEngine";
+import {
+  computeAlternativeRobustTrajectory,
+  executeDoubleVerificationAndRecalculation,
+} from "./doubleVerificationEngine";
 
 export const HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM = 13.097; // 嚴格定義：雪山隧道全長 13.097 km
 export const MODEL_DISCRETIZATION_SLICES = 20; // 嚴格定義：20 個空間微元切片
@@ -266,29 +271,55 @@ export function runVdTrafficEstimator(
   const receivedTimestampStr = new Date().toISOString();
   const apiLatency = evaluateApiLatency(apiTimestampStr, receivedTimestampStr);
 
-  // Step 3: Compute Delay-Aware Nonlinear Trajectory for Lane 1, Lane 2, and combined Road
-  // 每個 20 個空間微元具備 v_i(x_i, t_i)，動態積分 T = Σ [Δx_i / v_est,i(x_i, t_i)]
-  const lane1Trajectory = estimateDelayAwareNonlinearTrajectory(
-    validatedRecords,
-    direction,
-    0,
-    apiLatency.tauApiSec,
-    apiLatency.isLatencyKnown
-  );
-  const lane2Trajectory = estimateDelayAwareNonlinearTrajectory(
-    validatedRecords,
-    direction,
-    1,
-    apiLatency.tauApiSec,
-    apiLatency.isLatencyKnown
-  );
-  const roadTrajectory = estimateDelayAwareNonlinearTrajectory(
-    validatedRecords,
-    direction,
-    -1,
-    apiLatency.tauApiSec,
-    apiLatency.isLatencyKnown
-  );
+  // Step 3: Compute Trajectory with Primary Approach & Alternative Robust Fallback
+  // 1. 保留原本動態連續積分演算法為預設主方法 (Do not change the original approach)
+  // 2. 若原本方法失敗 (計算例外/數值無效)，自動採用替代穩健方法 (Use a different method if the original method fails)
+  let estimationMethod: "PRIMARY_TRAJECTORY_CALCULUS" | "ALTERNATIVE_ROBUST_FALLBACK" = "PRIMARY_TRAJECTORY_CALCULUS";
+  let lane1Trajectory: any;
+  let lane2Trajectory: any;
+  let roadTrajectory: any;
+
+  try {
+    lane1Trajectory = estimateDelayAwareNonlinearTrajectory(
+      validatedRecords,
+      direction,
+      0,
+      apiLatency.tauApiSec,
+      apiLatency.isLatencyKnown
+    );
+    lane2Trajectory = estimateDelayAwareNonlinearTrajectory(
+      validatedRecords,
+      direction,
+      1,
+      apiLatency.tauApiSec,
+      apiLatency.isLatencyKnown
+    );
+    roadTrajectory = estimateDelayAwareNonlinearTrajectory(
+      validatedRecords,
+      direction,
+      -1,
+      apiLatency.tauApiSec,
+      apiLatency.isLatencyKnown
+    );
+
+    // 檢驗數值合理性 (避免發散或非有限數)
+    if (
+      !isFinite(lane1Trajectory.totalTravelTimeSec) ||
+      lane1Trajectory.totalTravelTimeSec <= 0 ||
+      !isFinite(lane2Trajectory.totalTravelTimeSec) ||
+      lane2Trajectory.totalTravelTimeSec <= 0 ||
+      !isFinite(roadTrajectory.totalTravelTimeSec) ||
+      roadTrajectory.totalTravelTimeSec <= 0
+    ) {
+      throw new Error("Primary trajectory calculus returned non-finite or non-positive travel time.");
+    }
+  } catch (primaryErr) {
+    console.warn("原本方法計算異常，啟動備援穩健替代演算法 (Falling back to alternative method):", primaryErr);
+    estimationMethod = "ALTERNATIVE_ROBUST_FALLBACK";
+    lane1Trajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, 0);
+    lane2Trajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, 1);
+    roadTrajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, -1);
+  }
 
   // Lane 1 Speeds & Aggregations (Full precision internally)
   const lane1Speeds = validatedRecords.map((d) => d.lanes[0]?.speedKmh || 80);
@@ -344,7 +375,15 @@ export function runVdTrafficEstimator(
     segments: lane2Trajectory.segments,
   };
 
-  // Step 4: Lane Comparison & Strict Safety Notice (Full precision: ΔT = |T_lane1 - T_lane2|)
+  // Step 4: Double Verification for Extreme Situations (速差超過 23 km/h 觸發二次重算，重算仍 > 20 km/h 判定為極端情況)
+  const doubleVerification = executeDoubleVerificationAndRecalculation(
+    validatedRecords,
+    direction,
+    lane1State.equivalentTravelSpeedKmh,
+    lane2State.equivalentTravelSpeedKmh,
+    receivedTimestampStr
+  );
+
   const diffSec = Math.abs(lane1State.travelTimeSec - lane2State.travelTimeSec);
   const diffRoundedSec = Math.round(diffSec);
   
@@ -364,7 +403,13 @@ export function runVdTrafficEstimator(
   let comparisonTitle = "";
   let safetyNotice = "";
 
-  if (diffRoundedSec < Math.round(trainedSwitchThresholdSec)) {
+  if (doubleVerification.isExtremeSituation) {
+    // 極端情況已由二次重算確認 (>23 km/h 觸發，重算仍 > 20 km/h)
+    const fasterSideLabel = lane1State.travelTimeSec < lane2State.travelTimeSec ? "內側" : "外側";
+    fasterLaneId = lane1State.travelTimeSec < lane2State.travelTimeSec ? 1 : 2;
+    comparisonTitle = `【極端異常路況確認】雙車道二次重算速差達 ${doubleVerification.recalculatedLaneDiffKmh.toFixed(1)} km/h（>20 km/h 極端門檻）：${fasterSideLabel} 車道顯著領先！`;
+    safetyNotice = `【極端路況警告】兩車道速差超過 23 km/h 經二次獨立重算後仍達 ${doubleVerification.recalculatedLaneDiffKmh.toFixed(1)} km/h，判定為單線阻滯／局部事故極端路況。請維持安全車距與現場燈號，直接參考下方 API 原始傳輸觀測數據。`;
+  } else if (diffRoundedSec < Math.round(trainedSwitchThresholdSec)) {
     // 條件一：若兩車道時間差 ΔT 小於學習切換門檻（ΔT < trainedSwitchThresholdSec）
     // 判定邏輯：差異在容許平衡波動範圍內，兩車道皆可選擇。
     fasterLaneId = null;
@@ -455,7 +500,14 @@ export function runVdTrafficEstimator(
       trainedLaneSelectionConfidence,
       lane1SpeedBiasFactor: learnedParams.lane1SpeedBiasFactor,
       laneCouplingFriction: learnedParams.laneCouplingFriction,
+      doubleVerification,
+      isExtremeSituation: doubleVerification.isExtremeSituation,
     },
+
+    // 極端情況雙重重算驗證機制與模式註記 (Double Verification & Mode Tracking)
+    doubleVerification,
+    isExtremeSituation: doubleVerification.isExtremeSituation,
+    estimationMethod,
 
     // RAW vs MODEL Separation & Diagnostics
     rawVsModel: {

@@ -19,6 +19,14 @@ import {
   Server,
   Layers,
   Activity,
+  Globe,
+  Radio,
+  Link2,
+  ArrowRightLeft,
+  Terminal,
+  Loader2,
+  ExternalLink,
+  HelpCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -42,6 +50,15 @@ import {
   LearnedModelParameters,
   CapturedDatasetRecord,
 } from "../types";
+import {
+  getApiConfig,
+  saveApiConfig,
+  resetApiConfig,
+  testApiEndpointConnection,
+  ApiEndpointConfig,
+  DEFAULT_API_CONFIG,
+  getResolvedApiUrl,
+} from "../services/apiConfig";
 
 interface AdminAdvancedSettingsModalProps {
   isOpen: boolean;
@@ -66,6 +83,16 @@ export default function AdminAdvancedSettingsModal({
   const [tdxClientSecret, setTdxClientSecret] = useState(
     localStorage.getItem("TDX_CLIENT_SECRET") || ""
   );
+  const [apiConfig, setApiConfig] = useState<ApiEndpointConfig>(getApiConfig());
+  const [isTestingApi, setIsTestingApi] = useState(false);
+  const [testApiResult, setTestApiResult] = useState<{
+    success: boolean;
+    status: number;
+    message: string;
+    dataPreview?: string;
+    latencyMs: number;
+  } | null>(null);
+
   const [statusNotice, setStatusNotice] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [isTraining, setIsTraining] = useState(false);
 
@@ -75,6 +102,8 @@ export default function AdminAdvancedSettingsModal({
     setLearnedParams(getLearnedParameters());
     setTdxClientId(localStorage.getItem("TDX_CLIENT_ID") || "");
     setTdxClientSecret(localStorage.getItem("TDX_CLIENT_SECRET") || "");
+    setApiConfig(getApiConfig());
+    setTestApiResult(null);
   };
 
   useEffect(() => {
@@ -182,7 +211,68 @@ export default function AdminAdvancedSettingsModal({
     );
   };
 
-  // 3. TDX 金鑰儲存與變更 (TDX Key Settings)
+  // 3. API 路由與端點對齊設定 (API Alignment & Renaming)
+  const handleSaveApiConfig = () => {
+    executeGuardedAction(
+      "儲存 API 路由與端點對齊設定",
+      "此動作將更新系統呼叫的 API 端點路徑、Base URL 及鑑權 Headers，使其與外部網站完全對齊。",
+      () => {
+        saveApiConfig(apiConfig);
+        showNotice("✓ API 路由與端點命名已成功儲存並生效！");
+        onDataChanged?.();
+      }
+    );
+  };
+
+  const handleResetApiConfig = () => {
+    executeGuardedAction(
+      "還原為預設 API 端點",
+      "此動作將清除自訂端點命名，還原為系統標準 TDX 端點路徑。",
+      () => {
+        const def = resetApiConfig();
+        setApiConfig(def);
+        setTestApiResult(null);
+        showNotice("✓ API 端點已還原為標準預設值。");
+        onDataChanged?.();
+      }
+    );
+  };
+
+  const handleTestApiConnection = async () => {
+    setIsTestingApi(true);
+    setTestApiResult(null);
+
+    const targetUrl = getResolvedApiUrl("freewayVd");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (apiConfig.customAuthHeaderName && apiConfig.customAuthHeaderValue) {
+      headers[apiConfig.customAuthHeaderName] = apiConfig.customAuthHeaderValue;
+    }
+    if (apiConfig.customApiKeyHeaderName && apiConfig.customApiKeyHeaderValue) {
+      headers[apiConfig.customApiKeyHeaderName] = apiConfig.customApiKeyHeaderValue;
+    }
+
+    try {
+      const res = await testApiEndpointConnection(targetUrl, headers);
+      setTestApiResult(res);
+      if (res.success) {
+        showNotice(`✓ API 連線測試成功 (HTTP ${res.status})！延遲 ${res.latencyMs}ms`);
+      } else {
+        showNotice(`API 連線測試失敗：${res.message}`, "error");
+      }
+    } catch (err: any) {
+      setTestApiResult({
+        success: false,
+        status: 0,
+        message: err.message || "連線測試異常",
+        latencyMs: 0,
+      });
+      showNotice("連線測試異常", "error");
+    } finally {
+      setIsTestingApi(false);
+    }
+  };
+
+  // 4. TDX 金鑰儲存與變更 (TDX Key Settings)
   const handleSaveTdx = () => {
     executeGuardedAction(
       "儲存 TDX 官方金鑰憑證",
@@ -215,7 +305,7 @@ export default function AdminAdvancedSettingsModal({
     );
   };
 
-  // 4. 後台登出
+  // 5. 後台登出
   const handleLogout = () => {
     logoutAdmin();
     setIsAuth(false);
@@ -333,8 +423,8 @@ export default function AdminAdvancedSettingsModal({
                   : "text-slate-400 hover:text-white hover:bg-slate-800/60"
               }`}
             >
-              <Key className="h-4 w-4" />
-              <span>TDX 金鑰與連線設定</span>
+              <ArrowRightLeft className="h-4 w-4" />
+              <span>API 路由對齊與金鑰</span>
             </button>
 
             <button
@@ -565,59 +655,300 @@ export default function AdminAdvancedSettingsModal({
               </div>
             )}
 
-            {/* TAB 3: TDX 金鑰與連線設定 */}
+            {/* TAB 3: API 路由對齊、重新命名與 TDX 金鑰 */}
             {activeTab === "tdx" && (
-              <div className="space-y-4 max-w-xl">
-                <div className="space-y-1">
-                  <h3 className="text-sm font-bold text-white">交通部 TDX 官方金鑰設定 (限後台修改)</h3>
-                  <p className="text-xs text-slate-400">
-                    可輸入您申請的 TDX 憑證；若未輸入，系統將自動採用伺服器後端金鑰輪轉池。
-                  </p>
-                </div>
+              <div className="space-y-6 max-w-2xl">
+                {/* 區塊 1: API 路由名稱與端點對齊 (對齊另一個網站) */}
+                <div className="bg-slate-950/80 p-5 rounded-2xl border border-slate-800 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <ArrowRightLeft className="h-4 w-4 text-amber-400" />
+                        <span>API 路由名稱與端點對齊 (對齊另一個網站)</span>
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        若您在另一側網站有特定的 API 路由名稱、Base URL 或鑑權金鑰，可在下方自訂以達到 100% 結構對齊。
+                      </p>
+                    </div>
 
-                <div className="space-y-3 font-mono text-xs">
-                  <div>
-                    <label className="block text-slate-300 font-bold mb-1 font-sans">
-                      TDX Client ID
-                    </label>
-                    <input
-                      type="text"
-                      value={tdxClientId}
-                      onChange={(e) => setTdxClientId(e.target.value)}
-                      placeholder="例如：your_client_id-xxxxxxxx-xxxx"
-                      className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleResetApiConfig}
+                        className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer"
+                        title="還原預設 API 端點"
+                      >
+                        還原預設
+                      </button>
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-slate-300 font-bold mb-1 font-sans">
-                      TDX Client Secret
-                    </label>
-                    <input
-                      type="password"
-                      value={tdxClientSecret}
-                      onChange={(e) => setTdxClientSecret(e.target.value)}
-                      placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                      className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
-                    />
+                  {/* 快速範本選擇 */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-slate-400">快速對齊範本：</label>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <button
+                        onClick={() =>
+                          setApiConfig((prev) => ({
+                            ...prev,
+                            apiAliasName: "標準 TDX 本地代理 (預設)",
+                            baseUrl: "",
+                            freewayVdPath: "/api/tdx/freeway-vd",
+                            freewayLiveEventsPath: "/api/tdx/freeway-live-events",
+                          }))
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-[11px] font-mono cursor-pointer"
+                      >
+                        預設 /api/tdx/...
+                      </button>
+                      <button
+                        onClick={() =>
+                          setApiConfig((prev) => ({
+                            ...prev,
+                            apiAliasName: "V1 標準架構 (/api/v1/...)",
+                            baseUrl: "",
+                            freewayVdPath: "/api/v1/freeway-vd",
+                            freewayLiveEventsPath: "/api/v1/freeway-live-events",
+                          }))
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-[11px] font-mono cursor-pointer"
+                      >
+                        /api/v1/freeway-vd
+                      </button>
+                      <button
+                        onClick={() =>
+                          setApiConfig((prev) => ({
+                            ...prev,
+                            apiAliasName: "Traffic 精簡架構 (/api/traffic/...)",
+                            baseUrl: "",
+                            freewayVdPath: "/api/traffic/vd",
+                            freewayLiveEventsPath: "/api/traffic/live-events",
+                          }))
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-[11px] font-mono cursor-pointer"
+                      >
+                        /api/traffic/vd
+                      </button>
+                    </div>
                   </div>
+
+                  {/* 表單欄位 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 font-mono text-xs">
+                    <div className="sm:col-span-2">
+                      <label className="block text-slate-300 font-bold mb-1 font-sans">
+                        API 識別名稱 / 專案標籤 (Alias Name)
+                      </label>
+                      <input
+                        type="text"
+                        value={apiConfig.apiAliasName}
+                        onChange={(e) =>
+                          setApiConfig((prev) => ({ ...prev, apiAliasName: e.target.value }))
+                        }
+                        placeholder="例如：國5即時路況主服務、另一網站中繼站"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white font-sans"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-slate-300 font-bold mb-1 font-sans flex items-center justify-between">
+                        <span>API Base URL / 外部主機伺服器網址</span>
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          留空代表本站同源代理 (預設)
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        value={apiConfig.baseUrl}
+                        onChange={(e) =>
+                          setApiConfig((prev) => ({ ...prev, baseUrl: e.target.value }))
+                        }
+                        placeholder="例如：https://my-traffic-backend.com 或留空"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 font-sans">
+                        車流 VD 即時數據 API 端點路徑
+                      </label>
+                      <input
+                        type="text"
+                        value={apiConfig.freewayVdPath}
+                        onChange={(e) =>
+                          setApiConfig((prev) => ({ ...prev, freewayVdPath: e.target.value }))
+                        }
+                        placeholder="/api/tdx/freeway-vd"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 font-sans">
+                        即時事件通報 API 端點路徑
+                      </label>
+                      <input
+                        type="text"
+                        value={apiConfig.freewayLiveEventsPath}
+                        onChange={(e) =>
+                          setApiConfig((prev) => ({ ...prev, freewayLiveEventsPath: e.target.value }))
+                        }
+                        placeholder="/api/tdx/freeway-live-events"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 font-sans">
+                        鑑權 Header 名稱 (如 Authorization)
+                      </label>
+                      <input
+                        type="text"
+                        value={apiConfig.customAuthHeaderName}
+                        onChange={(e) =>
+                          setApiConfig((prev) => ({ ...prev, customAuthHeaderName: e.target.value }))
+                        }
+                        placeholder="Authorization"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 font-sans">
+                        鑑權 Header 內容 (如 Bearer token)
+                      </label>
+                      <input
+                        type="password"
+                        value={apiConfig.customAuthHeaderValue}
+                        onChange={(e) =>
+                          setApiConfig((prev) => ({ ...prev, customAuthHeaderValue: e.target.value }))
+                        }
+                        placeholder="Bearer your-token-here (選填)"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 組合後的呼叫預覽 */}
+                  <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 text-[11px] font-mono text-slate-300">
+                    <span className="text-slate-500 font-sans font-bold block mb-1">
+                      解析後的完整 API 呼叫路徑：
+                    </span>
+                    <div className="text-amber-400 font-bold break-all">
+                      GET {getResolvedApiUrl("freewayVd")}
+                    </div>
+                  </div>
+
+                  {/* 測試連線與儲存按鈕 */}
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <button
+                      onClick={handleSaveApiConfig}
+                      className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>儲存 API 路由與命名對齊</span>
+                    </button>
+
+                    <button
+                      onClick={handleTestApiConnection}
+                      disabled={isTestingApi}
+                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {isTestingApi ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+                      ) : (
+                        <Terminal className="h-4 w-4 text-sky-400" />
+                      )}
+                      <span>{isTestingApi ? "測試連線中..." : "即時連線測試 (Ping / Test)"}</span>
+                    </button>
+                  </div>
+
+                  {/* 測試連線結果即時展示 */}
+                  {testApiResult && (
+                    <div
+                      className={`p-3.5 rounded-xl border text-xs font-mono transition ${
+                        testApiResult.success
+                          ? "bg-emerald-950/40 border-emerald-800/80 text-emerald-300"
+                          : "bg-rose-950/40 border-rose-800/80 text-rose-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-sans font-bold mb-1">
+                        <span className="flex items-center gap-1.5">
+                          {testApiResult.success ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          ) : (
+                            <AlertTriangle className="h-4 w-4 text-rose-400" />
+                          )}
+                          <span>連線測試結果 (HTTP {testApiResult.status})</span>
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          延遲: {testApiResult.latencyMs}ms
+                        </span>
+                      </div>
+                      <p className="font-sans text-[11px] mt-0.5">{testApiResult.message}</p>
+                      {testApiResult.dataPreview && (
+                        <div className="mt-2 p-2 bg-slate-950/80 rounded-lg text-[10px] text-slate-400 overflow-x-auto">
+                          {testApiResult.dataPreview}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    onClick={handleSaveTdx}
-                    className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span>儲存 TDX 金鑰 (限後台)</span>
-                  </button>
+                {/* 區塊 2: 交通部 TDX 官方金鑰設定 */}
+                <div className="bg-slate-950/80 p-5 rounded-2xl border border-slate-800 space-y-4">
+                  <div className="space-y-1 pb-3 border-b border-slate-800/80">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Key className="h-4 w-4 text-amber-400" />
+                      <span>交通部 TDX 官方金鑰輪轉池設定 (限後台修改)</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      可輸入您直接向交通部 TDX 申請的 Client ID 與 Secret；若未輸入，系統將全自動採用伺服器後端多通道金鑰輪轉池。
+                    </p>
+                  </div>
 
-                  <button
-                    onClick={handleClearTdx}
-                    className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
-                  >
-                    清除金鑰 (使用系統池)
-                  </button>
+                  <div className="space-y-3 font-mono text-xs">
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 font-sans">
+                        TDX Client ID
+                      </label>
+                      <input
+                        type="text"
+                        value={tdxClientId}
+                        onChange={(e) => setTdxClientId(e.target.value)}
+                        placeholder="例如：your_client_id-xxxxxxxx-xxxx"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 font-sans">
+                        TDX Client Secret
+                      </label>
+                      <input
+                        type="password"
+                        value={tdxClientSecret}
+                        onChange={(e) => setTdxClientSecret(e.target.value)}
+                        placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      onClick={handleSaveTdx}
+                      className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>儲存 TDX 憑證 (限後台)</span>
+                    </button>
+
+                    <button
+                      onClick={handleClearTdx}
+                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+                    >
+                      清除金鑰 (使用系統池)
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

@@ -140,6 +140,47 @@ export interface LaneComparison {
   trainedLaneSelectionConfidence?: number; // 車道推薦決策信心度 (%)
   lane1SpeedBiasFactor?: number; // 內側車道偏置修正
   laneCouplingFriction?: number; // 雙車道紊流耦合係數
+  
+  // 極端情況雙重重算驗證機制 (Double Verification for Extreme Lane Divergence)
+  doubleVerification?: DoubleVerificationState;
+  isExtremeSituation?: boolean; // 若重算後雙車道速差仍 > 20 km/h，判定為極端異常路況
+}
+
+export interface ApiDirectVdTelemetry {
+  detectorId: string;
+  mileageKm: number;
+  lane1SpeedKmh: number;
+  lane2SpeedKmh: number;
+  speedDeltaKmh: number;
+  lane1FlowVehPerHour: number;
+  lane2FlowVehPerHour: number;
+  lane1OccupancyPercent: number;
+  lane2OccupancyPercent: number;
+  isExtremeSpot: boolean;
+  statusTag: "NORMAL" | "SPEED_DIVERGENCE" | "EXTREME_SPOT";
+}
+
+export interface DoubleVerificationState {
+  triggered: boolean; // 是否觸發二次驗證 (當初算兩車道速差 > 23 km/h 時觸發)
+  triggerThresholdKmh: number; // 23 km/h 觸發門檻
+  initialLaneDiffKmh: number; // 初次計算兩車道速差 (km/h)
+  recalculatedLaneDiffKmh: number; // 重算後兩車道速差 (km/h)
+  recalculatedThresholdKmh: number; // 20 km/h 極端判定門檻
+  isExtremeSituation: boolean; // 若重算後仍 > 20 km/h，正式判定為極端情境
+  verificationMethod: string; // 驗證重算演算法名稱
+  statusText: string; // 狀態說明
+  extremeExplanation?: string; // 極端情況說明
+  directApiDisplay: {
+    receivedTimestamp: string;
+    lane1AvgApiSpeedKmh: number;
+    lane2AvgApiSpeedKmh: number;
+    lane1ApiFlowVehPerHour: number;
+    lane2ApiFlowVehPerHour: number;
+    lane1ApiOccupancyPercent: number;
+    lane2ApiOccupancyPercent: number;
+    totalVdStations: number;
+    vdReadings: ApiDirectVdTelemetry[];
+  };
 }
 
 export interface CongestionClassification {
@@ -260,6 +301,11 @@ export interface EstimatedState {
   // Lane specific states & comparison
   laneComparison: LaneComparison;
   
+  // 極端情況雙重重算驗證機制 (Double Verification for Extreme Lane Divergence)
+  doubleVerification?: DoubleVerificationState;
+  isExtremeSituation?: boolean; // 若重算後雙車道速差仍 > 20 km/h，判定為極端異常路況
+  estimationMethod?: "PRIMARY_TRAJECTORY_CALCULUS" | "ALTERNATIVE_ROBUST_FALLBACK";
+
   // RAW vs MODEL Separation & Diagnostic Info
   rawVsModel: RawVsModelComparison;
 

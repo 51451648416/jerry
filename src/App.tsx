@@ -28,6 +28,7 @@ import TheoryAndPrinciplesView from "./components/TheoryAndPrinciplesView";
 import BackendAuthModal from "./components/BackendAuthModal";
 import AdminAdvancedSettingsModal from "./components/AdminAdvancedSettingsModal";
 import GlobalSearchModal, { SearchResultItem } from "./components/GlobalSearchModal";
+import { getResolvedApiUrl, getResolvedApiHeaders } from "./services/apiConfig";
 
 import { Direction, FinalEstimatorOutput } from "./types";
 import { runVdTrafficEstimator } from "./estimator/trafficEngine";
@@ -183,11 +184,17 @@ export default function App() {
     setCooldown(API_COOLDOWN_SECONDS);
 
     try {
-      const response = await fetch("/api/tdx/freeway-vd");
+      const targetApiUrl = getResolvedApiUrl("freewayVd");
+      const targetHeaders = getResolvedApiHeaders();
+
+      const response = await fetch(targetApiUrl, {
+        method: "GET",
+        headers: targetHeaders,
+      });
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || `官方 TDX 伺服器連線異常 (HTTP ${response.status})`);
+        throw new Error(errJson.error || `API 連線異常 (HTTP ${response.status})：${targetApiUrl}`);
       }
 
       const rawPayload = await response.json();

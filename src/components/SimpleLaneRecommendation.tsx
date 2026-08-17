@@ -11,9 +11,11 @@ import {
   Gauge,
   Cpu,
   CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 import { FinalEstimatorOutput, Direction } from "../types";
 import SpeedometerGauge from "./SpeedometerGauge";
+import ApiDirectTelemetryTable from "./ApiDirectTelemetryTable";
 
 interface SimpleLaneRecommendationProps {
   estimatorOutput: FinalEstimatorOutput;
@@ -32,6 +34,8 @@ export default function SimpleLaneRecommendation({
   const diffSec = estState.laneComparison.differenceSec;
   const fasterLaneId = estState.laneComparison.fasterLaneId;
   const consistency = estState.consistencyCheck;
+  const doubleVerification = estState.doubleVerification;
+  const isExtremeSituation = estState.isExtremeSituation;
 
   // 取得在線訓練之動態車道切換門檻與信心度
   const trainedMarginSec = Math.round(estState.laneComparison.trainedSwitchMarginSec ?? 18);
@@ -218,7 +222,14 @@ export default function SimpleLaneRecommendation({
         </div>
       </div>
 
-      {/* 3. Advanced Modal Trigger */}
+      {/* 3. API 直接傳輸實時數據展示與雙重重算驗證 (Direct API Telemetry & Double Verification) */}
+      <ApiDirectTelemetryTable
+        doubleVerification={doubleVerification}
+        isExtremeSituation={isExtremeSituation}
+        defaultExpanded={isExtremeSituation || doubleVerification?.triggered}
+      />
+
+      {/* 4. Advanced Modal Trigger */}
       <div className="flex justify-end pt-1">
         <button
           onClick={onOpenAdvanced}

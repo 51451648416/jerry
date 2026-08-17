@@ -26,7 +26,7 @@ async function startServer() {
   });
 
   // Unified endpoint for Freeway VD data with Automatic Key Rotation & Failover
-  app.get("/api/tdx/freeway-vd", async (req, res) => {
+  const handleFreewayVd = async (req: express.Request, res: express.Response) => {
     try {
       const tdxUrl =
         "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
@@ -39,10 +39,15 @@ async function startServer() {
         error: err.message || "無法連線至交通部 TDX 伺服器，所有金鑰輪轉嘗試皆未成功，請稍後重試",
       });
     }
-  });
+  };
+
+  app.get("/api/tdx/freeway-vd", handleFreewayVd);
+  app.get("/api/v1/freeway-vd", handleFreewayVd);
+  app.get("/api/traffic/vd", handleFreewayVd);
+  app.get("/api/n5/vd", handleFreewayVd);
 
   // Unified endpoint for Freeway Live Events data with Automatic Key Rotation & Failover
-  app.get("/api/tdx/freeway-live-events", async (req, res) => {
+  const handleFreewayLiveEvents = async (req: express.Request, res: express.Response) => {
     try {
       // TDX API: 國道即時路況事件端點
       const tdxEventsUrl =
@@ -68,7 +73,12 @@ async function startServer() {
         LiveEvents: [],
       });
     }
-  });
+  };
+
+  app.get("/api/tdx/freeway-live-events", handleFreewayLiveEvents);
+  app.get("/api/v1/freeway-live-events", handleFreewayLiveEvents);
+  app.get("/api/traffic/live-events", handleFreewayLiveEvents);
+  app.get("/api/n5/events", handleFreewayLiveEvents);
 
   // TDX Auth Token Proxy (compatibility with rotation fallback)
   app.post("/api/tdx/token", async (req, res) => {

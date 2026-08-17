@@ -14,6 +14,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { FinalEstimatorOutput } from "../types";
+import ApiDirectTelemetryTable from "./ApiDirectTelemetryTable";
 
 interface RawVsModelDiagnosticProps {
   estimatorOutput: FinalEstimatorOutput;
@@ -397,6 +398,13 @@ export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiag
           </div>
         </div>
       </div>
+
+      {/* 5. 實時 API 傳輸遙測明細與雙重重算驗證表 (Direct API Telemetry & Double Verification) */}
+      <ApiDirectTelemetryTable
+        doubleVerification={estState.doubleVerification}
+        isExtremeSituation={estState.isExtremeSituation}
+        defaultExpanded={true}
+      />
     </div>
   );
 }
