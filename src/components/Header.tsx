@@ -56,14 +56,14 @@ export default function Header({
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <h1 className="text-sm sm:text-base font-extrabold tracking-tight text-slate-900 truncate">
-                    國5雪隧即時路況
+                    餅乾・雪隧即時交通監控系統
                   </h1>
                   <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-bold shrink-0">
                     即時
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-500 hidden sm:block truncate">
-                  雙向 20 微元空間積分・全線 0K~54K・出發時間試算
+                  內外車道推薦・雙向 20 微元空間積分・走廊延遲分析
                 </p>
               </div>
             </div>
