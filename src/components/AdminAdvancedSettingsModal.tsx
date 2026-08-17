@@ -59,6 +59,7 @@ import {
   DEFAULT_API_CONFIG,
   getResolvedApiUrl,
 } from "../services/apiConfig";
+import { globalTdxKeyManager } from "../services/tdxKeyRotator";
 
 interface AdminAdvancedSettingsModalProps {
   isOpen: boolean;
@@ -281,7 +282,8 @@ export default function AdminAdvancedSettingsModal({
         try {
           localStorage.setItem("TDX_CLIENT_ID", tdxClientId.trim());
           localStorage.setItem("TDX_CLIENT_SECRET", tdxClientSecret.trim());
-          showNotice("✓ TDX 金鑰已成功儲存！");
+          globalTdxKeyManager.reloadKeys();
+          showNotice("✓ TDX 金鑰已成功儲存並同步更新連線池！");
           onDataChanged?.();
         } catch {
           showNotice("儲存金鑰失敗", "error");
@@ -297,6 +299,7 @@ export default function AdminAdvancedSettingsModal({
       () => {
         localStorage.removeItem("TDX_CLIENT_ID");
         localStorage.removeItem("TDX_CLIENT_SECRET");
+        globalTdxKeyManager.reloadKeys();
         setTdxClientId("");
         setTdxClientSecret("");
         showNotice("✓ 自訂 TDX 金鑰已清除，回退至系統輪轉池。");

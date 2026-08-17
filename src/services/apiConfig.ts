@@ -27,15 +27,15 @@ const STORAGE_KEY = "N5_CUSTOM_API_CONFIG_V1";
 
 export const DEFAULT_API_CONFIG: ApiEndpointConfig = {
   baseUrl: "",
-  freewayVdPath: "/api/tdx/freeway-vd",
-  freewayLiveEventsPath: "/api/tdx/freeway-live-events",
-  tokenPath: "/api/tdx/token",
+  freewayVdPath: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON",
+  freewayLiveEventsPath: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON",
+  tokenPath: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
   healthPath: "/api/health",
   customAuthHeaderName: "Authorization",
   customAuthHeaderValue: "",
   customApiKeyHeaderName: "",
   customApiKeyHeaderValue: "",
-  apiAliasName: "標準 TDX 國道5號 API (預設端點)",
+  apiAliasName: "交通部 TDX 官方直連端點 (預設)",
 };
 
 /**
@@ -100,6 +100,11 @@ export function getResolvedApiUrl(
       break;
   }
 
+  // 若路徑本身已為完整絕對網址 (http:// 或 https://)，直接回傳
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+
   const base = (config.baseUrl || "").trim().replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
@@ -143,13 +148,39 @@ export async function testApiEndpointConnection(
       },
     });
     const latencyMs = Date.now() - startTime;
+    const contentType = res.headers.get("content-type") || "";
+    const isJson = contentType.toLowerCase().includes("json");
 
     if (!res.ok) {
-      const errText = await res.text().catch(() => "");
+      let errDetail = "";
+      if (isJson) {
+        try {
+          const errObj = await res.json();
+          errDetail = errObj.message || errObj.error_description || errObj.error || JSON.stringify(errObj);
+        } catch {
+          errDetail = `HTTP ${res.status} ${res.statusText}`;
+        }
+      } else {
+        const errText = await res.text().catch(() => "");
+        errDetail = errText.includes("<!DOCTYPE") || errText.includes("<html")
+          ? "伺服器回應 404 HTML 頁面 (無效路由)"
+          : errText.slice(0, 150);
+      }
       return {
         success: false,
         status: res.status,
-        message: `HTTP ${res.status} 錯誤: ${errText.slice(0, 150) || "連線未回應"}`,
+        message: `HTTP ${res.status} 錯誤: ${errDetail || "連線未回應"}`,
+        latencyMs,
+      };
+    }
+
+    if (!isJson) {
+      const rawText = await res.text().catch(() => "");
+      return {
+        success: false,
+        status: res.status,
+        message: `回應非 JSON 格式 (${contentType})，請確認網址是否正確`,
+        dataPreview: rawText.slice(0, 120),
         latencyMs,
       };
     }
@@ -166,10 +197,11 @@ export async function testApiEndpointConnection(
     };
   } catch (err: any) {
     const latencyMs = Date.now() - startTime;
+    const cleanErrMsg = typeof err === "object" && err ? (err.message || JSON.stringify(err)) : String(err);
     return {
       success: false,
       status: 0,
-      message: err.message || "連線失敗 (可能為跨網域 CORS 限制或主機無法連線)",
+      message: cleanErrMsg || "連線失敗 (可能為跨網域 CORS 限制或主機無法連線)",
       latencyMs,
     };
   }

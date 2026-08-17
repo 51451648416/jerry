@@ -20,6 +20,7 @@ import {
   parseTdxLiveEventsJson,
   GERMAN_TRAFFIC_EXAMPLE_PAYLOAD,
 } from "../services/liveEventsEngine";
+import { fetchDirectFreewayLiveEvents } from "../services/tdxDirectClient";
 
 interface LiveEventCorridorMonitorProps {
   onEventDetected?: (result: LiveEventAlgorithmResult) => void;
@@ -57,19 +58,11 @@ export default function LiveEventCorridorMonitor({
   const fetchLiveEvents = async () => {
     setIsChecking(true);
     try {
-      const res = await fetch("/api/tdx/freeway-live-events");
-      if (res.ok) {
-        const payload: TdxLiveEventsRootPayload = await res.json();
-        const parsed = parseTdxLiveEventsJson(payload);
-        setEventResult(parsed);
-        if (onEventDetected) onEventDetected(parsed);
-      } else {
-        // If TDX events endpoint has no current events, handle gracefully
-        const emptyResult = parseTdxLiveEventsJson({ LiveEvents: [] });
-        setEventResult(emptyResult);
-      }
-    } catch (e) {
-      console.warn("Background TDX Live Events check completed with no events or network quiet");
+      const parsed = await fetchDirectFreewayLiveEvents();
+      setEventResult(parsed);
+      if (onEventDetected) onEventDetected(parsed);
+    } catch (e: any) {
+      console.warn("Background TDX Live Events check completed with safe fallback:", e?.message || e);
       const emptyResult = parseTdxLiveEventsJson({ LiveEvents: [] });
       setEventResult(emptyResult);
     } finally {

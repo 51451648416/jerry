@@ -29,6 +29,7 @@ import BackendAuthModal from "./components/BackendAuthModal";
 import AdminAdvancedSettingsModal from "./components/AdminAdvancedSettingsModal";
 import GlobalSearchModal, { SearchResultItem } from "./components/GlobalSearchModal";
 import { getResolvedApiUrl, getResolvedApiHeaders } from "./services/apiConfig";
+import { fetchDirectFreewayVd } from "./services/tdxDirectClient";
 
 import { Direction, FinalEstimatorOutput } from "./types";
 import { runVdTrafficEstimator } from "./estimator/trafficEngine";
@@ -185,19 +186,48 @@ export default function App() {
 
     try {
       const targetApiUrl = getResolvedApiUrl("freewayVd");
-      const targetHeaders = getResolvedApiHeaders();
+      let rawPayload: any;
 
-      const response = await fetch(targetApiUrl, {
-        method: "GET",
-        headers: targetHeaders,
-      });
+      if (targetApiUrl.includes("transportdata.tw") || !targetApiUrl.startsWith("http")) {
+        // 使用前端 TDX 官方直連模組 (自動金鑰輪轉、Token 快取與容錯重試)
+        rawPayload = await fetchDirectFreewayVd(
+          targetApiUrl.startsWith("http") ? targetApiUrl : undefined
+        );
+      } else {
+        // 自訂外部 API 端點呼叫
+        const targetHeaders = getResolvedApiHeaders();
+        const response = await fetch(targetApiUrl, {
+          method: "GET",
+          headers: targetHeaders,
+        });
 
-      if (!response.ok) {
-        const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || `API 連線異常 (HTTP ${response.status})：${targetApiUrl}`);
+        const contentType = response.headers.get("content-type") || "";
+        const isJson = contentType.toLowerCase().includes("json");
+
+        if (!response.ok) {
+          let errDetail = "";
+          if (isJson) {
+            try {
+              const errJson = await response.json();
+              errDetail = errJson.error_description || errJson.error || errJson.message || JSON.stringify(errJson);
+            } catch {
+              errDetail = `HTTP ${response.status} ${response.statusText}`;
+            }
+          } else {
+            const raw = await response.text().catch(() => "");
+            errDetail = raw.includes("<!DOCTYPE") || raw.includes("<html")
+              ? "端點回傳 404 HTML 頁面 (找不到 API 路由)"
+              : raw.slice(0, 150);
+          }
+          throw new Error(`API 連線異常 (HTTP ${response.status})：${errDetail}`);
+        }
+
+        if (!isJson) {
+          throw new Error(`API 端點回傳非 JSON 格式 (${contentType})`);
+        }
+
+        rawPayload = await response.json();
       }
-
-      const rawPayload = await response.json();
 
       // Execute traffic state estimation without modifying any math
       const output = runVdTrafficEstimator(rawPayload, targetDir, 18);
@@ -214,7 +244,14 @@ export default function App() {
       showToast(`已成功同步 TDX 官方數據並自動收錄至資料集 (目前累計 ${totalCount} 筆)`, "emerald");
     } catch (err: any) {
       console.error("TDX Fetch Failed:", err);
-      const errMsg = err.message || "官方 TDX 伺服器連線失敗或回應超時，暫無法取得即時路況";
+      const errMsg =
+        typeof err === "string"
+          ? err
+          : err?.message
+          ? err.message
+          : typeof err === "object"
+          ? (err.error_description || err.error || JSON.stringify(err))
+          : "官方 TDX 伺服器連線失敗或回應超時，暫無法取得即時路況";
       setTdxError(errMsg);
       showToast(errMsg, "rose");
     } finally {

@@ -59,77 +59,110 @@ export class TdxKeyRotationSystem {
 
   /**
    * 初始化金鑰池
-   * 優先讀取環境變數 (TDX_CLIENT_ID / TDX_CLIENT_SECRET, TDX_CLIENT_ID_2 / TDX_CLIENT_SECRET_2 等)
+   * 優先順序：
+   * 1. 瀏覽器 LocalStorage (使用者透過介面自訂之 TDX_CLIENT_ID / TDX_CLIENT_SECRET)
+   * 2. 瀏覽器 LocalStorage 多組陣列 (TDX_API_KEYS)
+   * 3. 環境變數 (Vite import.meta.env 與 Node process.env)
+   * 4. 內建備援輪轉金鑰
    */
-  private initializeKeys() {
+  public initializeKeys() {
     const defaultKeys: { id: string; clientId: string; clientSecret: string; label: string }[] = [];
 
-    // 主要金鑰 (Primary Group 1)
-    const id1 = process.env.TDX_CLIENT_ID || "jerry09032-f563b9b2-6af4-4437";
-    const secret1 = process.env.TDX_CLIENT_SECRET || "0b749325-d88e-4e11-9d4d-318cb6f34fbe";
-    if (id1 && secret1) {
-      defaultKeys.push({
-        id: "key-group-1",
-        clientId: id1,
-        clientSecret: secret1,
-        label: "TDX 金鑰組 1 (主要通道)",
-      });
-    }
-
-    // 備用金鑰組 2 (由環境變數 TDX_CLIENT_ID_2 注入)
-    const id2 = process.env.TDX_CLIENT_ID_2;
-    const secret2 = process.env.TDX_CLIENT_SECRET_2;
-    if (id2 && secret2) {
-      defaultKeys.push({
-        id: "key-group-2",
-        clientId: id2,
-        clientSecret: secret2,
-        label: "TDX 金鑰組 2 (備用通道 A)",
-      });
-    }
-
-    // 備用金鑰組 3 (由環境變數 TDX_CLIENT_ID_3 注入)
-    const id3 = process.env.TDX_CLIENT_ID_3;
-    const secret3 = process.env.TDX_CLIENT_SECRET_3;
-    if (id3 && secret3) {
-      defaultKeys.push({
-        id: "key-group-3",
-        clientId: id3,
-        clientSecret: secret3,
-        label: "TDX 金鑰組 3 (備用通道 B)",
-      });
-    }
-
-    // 支援以 JSON 陣列或自訂字串擴充 (TDX_API_KEYS: '[{"id":"...","secret":"..."}]' 或 'id:secret,id2:secret2')
-    if (process.env.TDX_API_KEYS) {
+    // 1. 優先級 1：讀取瀏覽器 LocalStorage (用戶自訂或後台設定)
+    if (typeof window !== "undefined" && window.localStorage) {
       try {
-        const parsed = JSON.parse(process.env.TDX_API_KEYS);
-        if (Array.isArray(parsed)) {
-          parsed.forEach((item: any, idx: number) => {
-            if (item.clientId && item.clientSecret) {
-              defaultKeys.push({
-                id: `key-custom-${idx + 1}`,
-                clientId: item.clientId,
-                clientSecret: item.clientSecret,
-                label: item.label || `TDX 自訂金鑰組 ${idx + 1}`,
-              });
-            }
+        const localId = localStorage.getItem("TDX_CLIENT_ID");
+        const localSecret = localStorage.getItem("TDX_CLIENT_SECRET");
+        if (localId && localSecret && localId.trim() && localSecret.trim()) {
+          defaultKeys.push({
+            id: "key-local-storage-primary",
+            clientId: localId.trim(),
+            clientSecret: localSecret.trim(),
+            label: "TDX 自訂金鑰 (LocalStorage 優先)",
           });
         }
+
+        const localKeysRaw = localStorage.getItem("TDX_API_KEYS");
+        if (localKeysRaw) {
+          try {
+            const parsed = JSON.parse(localKeysRaw);
+            if (Array.isArray(parsed)) {
+              parsed.forEach((k: any, idx: number) => {
+                if (k.clientId && k.clientSecret && String(k.clientId).trim() && String(k.clientSecret).trim()) {
+                  defaultKeys.push({
+                    id: `key-local-custom-${idx + 1}`,
+                    clientId: String(k.clientId).trim(),
+                    clientSecret: String(k.clientSecret).trim(),
+                    label: k.label || `TDX 本機多組金鑰 ${idx + 1}`,
+                  });
+                }
+              });
+            }
+          } catch {}
+        }
       } catch (e) {
-        // 若為逗號分隔格式 id:secret,id2:secret2
-        const rawPairs = process.env.TDX_API_KEYS.split(",");
-        rawPairs.forEach((pair, idx) => {
-          const [cid, csec] = pair.split(":");
-          if (cid && csec && cid.trim() && csec.trim()) {
-            defaultKeys.push({
-              id: `key-env-pair-${idx + 1}`,
-              clientId: cid.trim(),
-              clientSecret: csec.trim(),
-              label: `TDX 環境金鑰組 ${idx + 1}`,
-            });
-          }
-        });
+        console.warn("無法讀取 LocalStorage 金鑰設定:", e);
+      }
+    }
+
+    // 2. 優先級 2：環境變數 (支援 Vite import.meta.env 與 Node process.env)
+    const getEnvVal = (key: string): string => {
+      let val = "";
+      if (typeof import.meta !== "undefined" && (import.meta as any).env) {
+        val = (import.meta as any).env[`VITE_${key}`] || (import.meta as any).env[key] || "";
+      }
+      if (!val && typeof process !== "undefined" && process.env) {
+        val = process.env[key] || process.env[`VITE_${key}`] || "";
+      }
+      return String(val || "").trim();
+    };
+
+    const envId1 = getEnvVal("TDX_CLIENT_ID");
+    const envSecret1 = getEnvVal("TDX_CLIENT_SECRET");
+    if (envId1 && envSecret1 && !defaultKeys.some((k) => k.clientId === envId1)) {
+      defaultKeys.push({
+        id: "key-env-1",
+        clientId: envId1,
+        clientSecret: envSecret1,
+        label: "TDX 主要環境變數金鑰",
+      });
+    }
+
+    const envId2 = getEnvVal("TDX_CLIENT_ID_2");
+    const envSecret2 = getEnvVal("TDX_CLIENT_SECRET_2");
+    if (envId2 && envSecret2 && !defaultKeys.some((k) => k.clientId === envId2)) {
+      defaultKeys.push({
+        id: "key-env-2",
+        clientId: envId2,
+        clientSecret: envSecret2,
+        label: "TDX 備用環境變數金鑰 A",
+      });
+    }
+
+    const envId3 = getEnvVal("TDX_CLIENT_ID_3");
+    const envSecret3 = getEnvVal("TDX_CLIENT_SECRET_3");
+    if (envId3 && envSecret3 && !defaultKeys.some((k) => k.clientId === envId3)) {
+      defaultKeys.push({
+        id: "key-env-3",
+        clientId: envId3,
+        clientSecret: envSecret3,
+        label: "TDX 備用環境變數金鑰 B",
+      });
+    }
+
+    // 3. 內建備援公用輪轉金鑰
+    const builtInDefaults = [
+      {
+        id: "key-builtin-primary",
+        clientId: "jerry09032-f563b9b2-6af4-4437",
+        clientSecret: "0b749325-d88e-4e11-9d4d-318cb6f34fbe",
+        label: "TDX 系統備援金鑰 1",
+      },
+    ];
+
+    for (const b of builtInDefaults) {
+      if (!defaultKeys.some((k) => k.clientId === b.clientId)) {
+        defaultKeys.push(b);
       }
     }
 
@@ -141,18 +174,15 @@ export class TdxKeyRotationSystem {
       failCount: 0,
       isHealthy: true,
     }));
+  }
 
-    if (this.keyPairs.length === 0) {
-      // 確保至少有一組預設鍵
-      this.keyPairs.push({
-        id: "key-default",
-        clientId: "jerry09032-f563b9b2-6af4-4437",
-        clientSecret: "0b749325-d88e-4e11-9d4d-318cb6f34fbe",
-        label: "TDX 預設金鑰組",
-        failCount: 0,
-        isHealthy: true,
-      });
-    }
+  /**
+   * 重新載入金鑰池並清空快取 (當使用者在介面更新 LocalStorage 時調用)
+   */
+  public reloadKeys() {
+    this.tokenCache.clear();
+    this.activeIndex = 0;
+    this.initializeKeys();
   }
 
   /**
@@ -221,13 +251,32 @@ export class TdxKeyRotationSystem {
 
     const response = await fetch(authUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: requestBody,
     });
 
+    const contentType = response.headers.get("content-type") || "";
+    const isJson = contentType.toLowerCase().includes("json");
+
     if (!response.ok) {
-      const errText = await response.text();
+      let errText = "";
+      if (isJson) {
+        try {
+          const errObj = await response.json();
+          errText = errObj.error_description || errObj.error || errObj.message || JSON.stringify(errObj);
+        } catch {
+          errText = response.statusText;
+        }
+      } else {
+        const raw = await response.text().catch(() => "");
+        errText = raw.length > 200 ? raw.substring(0, 200) + "..." : raw;
+      }
       throw new Error(`TDX 認證伺服器回應失敗 (${response.status}): ${errText}`);
+    }
+
+    if (!isJson) {
+      const raw = await response.text().catch(() => "");
+      throw new Error(`TDX 認證伺服器回傳非 JSON 資料 (Content-Type: ${contentType})：${raw.substring(0, 100)}`);
     }
 
     const data = await response.json();
@@ -305,21 +354,53 @@ export class TdxKeyRotationSystem {
           body: options.body,
         });
 
+        const contentType = res.headers.get("content-type") || "";
+        const isJson = contentType.toLowerCase().includes("json");
+
         // 檢查是否遭遇授權失效或限流 (401 Unauthorized / 403 Forbidden / 429 Too Many Requests)
         if (res.status === 401 || res.status === 403 || res.status === 429) {
-          const errText = await res.text();
+          const errText = await res.text().catch(() => "");
+          const cleanErr = errText.length > 200 ? errText.substring(0, 200) + "..." : errText;
           console.warn(
             `[TDX 金鑰輪流系統] 金鑰「${currentPair.label}」遭遇 HTTP ${res.status}，自動切換至下一組金鑰...`
           );
           // 清除該金鑰的 token 快取
           this.tokenCache.delete(currentPair.id);
-          this.rotateToNextKey(`遭遇 HTTP ${res.status}: ${errText}`);
+          this.rotateToNextKey(`遭遇 HTTP ${res.status}: ${cleanErr}`);
           continue;
         }
 
         if (!res.ok) {
-          const errText = await res.text();
+          let errText = "";
+          if (isJson) {
+            try {
+              const errObj = await res.json();
+              errText = errObj.error_description || errObj.error || errObj.message || JSON.stringify(errObj);
+            } catch {
+              errText = `HTTP ${res.status} ${res.statusText}`;
+            }
+          } else {
+            const raw = await res.text().catch(() => "");
+            errText = raw.includes("<!DOCTYPE") || raw.includes("<html")
+              ? `伺服器回應 HTML 頁面 (可能是 404 或代理路徑不存在)`
+              : raw.substring(0, 150);
+          }
           throw new Error(`TDX 數據端點回應錯誤 (${res.status}): ${errText}`);
+        }
+
+        if (!isJson) {
+          const rawText = await res.text().catch(() => "");
+          if (rawText.includes("<!DOCTYPE") || rawText.includes("<html")) {
+            throw new Error(`TDX 端點回傳 HTML 頁面而非 JSON 格式 (狀態碼: HTTP ${res.status})。請確認 API 網址。`);
+          }
+          try {
+            const parsed = JSON.parse(rawText) as T;
+            currentPair.lastUsedTimestamp = Date.now();
+            currentPair.isHealthy = true;
+            return { data: parsed, usedKeyPair: currentPair, attempts: attempt + 1 };
+          } catch {
+            throw new Error(`TDX 回傳格式不符 (Content-Type: ${contentType})，無法解析 JSON。`);
+          }
         }
 
         const data = (await res.json()) as T;
