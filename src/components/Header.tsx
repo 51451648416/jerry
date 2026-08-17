@@ -10,6 +10,7 @@ import {
   Lock,
   Unlock,
   RefreshCw,
+  Search,
 } from "lucide-react";
 
 export type ActiveTabType = "lane" | "corridor" | "departure" | "theory" | "cctv";
@@ -25,6 +26,7 @@ interface HeaderProps {
   onRefresh?: () => void;
   isLoading?: boolean;
   cooldown?: number;
+  onOpenSearch?: () => void;
 }
 
 export default function Header({
@@ -38,6 +40,7 @@ export default function Header({
   onRefresh,
   isLoading = false,
   cooldown = 0,
+  onOpenSearch,
 }: HeaderProps) {
   return (
     <>
@@ -65,8 +68,18 @@ export default function Header({
               </div>
             </div>
 
-            {/* 手機版快速操作區 (方向切換 + 後台按鈕) */}
+            {/* 手機版快速操作區 (搜尋 + 方向切換 + 重新整理 + 後台按鈕) */}
             <div className="flex items-center gap-1.5 md:hidden">
+              {onOpenSearch && (
+                <button
+                  onClick={onOpenSearch}
+                  className="p-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center border bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200 cursor-pointer shadow-2xs shrink-0"
+                  title="站內關鍵字搜尋"
+                >
+                  <Search className="h-3.5 w-3.5 text-emerald-600" />
+                </button>
+              )}
+
               {direction && onDirectionChange && (
                 <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-[11px] font-bold">
                   <button
@@ -125,8 +138,23 @@ export default function Header({
             </div>
           </div>
 
-          {/* 電腦版 / 平板版 導覽列 (隱藏於手機端，手機端改用底部常駐 Navigation) */}
+          {/* 電腦版 / 平板版 導覽列與搜尋列 */}
           <div className="hidden md:flex items-center gap-2 justify-end overflow-x-auto no-scrollbar">
+            {/* 站內關鍵字搜尋按鈕 (支援 ⌘K / Ctrl+K 快捷鍵) */}
+            {onOpenSearch && (
+              <button
+                onClick={onOpenSearch}
+                className="px-3 py-1.5 rounded-2xl bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 transition flex items-center gap-2 text-xs font-medium cursor-pointer shadow-2xs"
+                title="全站關鍵字搜尋 (快捷鍵 Ctrl+K / ⌘K)"
+              >
+                <Search className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                <span>搜尋路況、交流道、CCTV...</span>
+                <kbd className="hidden lg:inline-block text-[10px] font-mono bg-white text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">
+                  ⌘K
+                </kbd>
+              </button>
+            )}
+
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200">
               {/* Tab 1: 雪隧與車道 */}
               <button

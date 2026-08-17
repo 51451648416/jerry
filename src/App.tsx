@@ -27,6 +27,7 @@ import DatasetRepositoryView from "./components/DatasetRepositoryView";
 import TheoryAndPrinciplesView from "./components/TheoryAndPrinciplesView";
 import BackendAuthModal from "./components/BackendAuthModal";
 import AdminAdvancedSettingsModal from "./components/AdminAdvancedSettingsModal";
+import GlobalSearchModal, { SearchResultItem } from "./components/GlobalSearchModal";
 
 import { Direction, FinalEstimatorOutput } from "./types";
 import { runVdTrafficEstimator } from "./estimator/trafficEngine";
@@ -56,6 +57,31 @@ export default function App() {
 
   // Advanced Analysis Modal State
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+
+  // Global Keyword Search Modal State
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // 全域快捷鍵 ⌘K / Ctrl+K 開啟搜尋
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const handleSelectSearchResult = (result: SearchResultItem) => {
+    if (result.direction && result.direction !== direction) {
+      handleDirectionChange(result.direction);
+    }
+    if (result.tabTarget) {
+      setActiveTab(result.tabTarget);
+    }
+    showToast(`已跳轉至「${result.title}」`, "emerald");
+  };
 
   // Backend Admin Authentication & Advanced Settings Modals
   const [isAdminAuth, setIsAdminAuth] = useState<boolean>(isAdminAuthenticated());
@@ -244,6 +270,7 @@ export default function App() {
         onRefresh={() => fetchTdxAndEstimate(direction, false)}
         isLoading={isLoading}
         cooldown={cooldown}
+        onOpenSearch={() => setIsSearchOpen(true)}
       />
 
       {/* Main Container (Clean White Theme Layout with Mobile Bottom Nav Padding) */}
@@ -463,6 +490,14 @@ export default function App() {
         }}
         actionTitle={authPromptState.title}
         actionDescription={authPromptState.description}
+      />
+
+      {/* 全站關鍵字搜尋視窗 (Global Keyword Search Modal) */}
+      <GlobalSearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onSelectResult={handleSelectSearchResult}
+        currentDirection={direction}
       />
     </div>
   );
